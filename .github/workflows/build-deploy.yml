@@ -40,6 +40,8 @@ jobs:
     name: Build, Test & Deploy to Testnet
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
+    env:
+      SOROBAN_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -55,26 +57,8 @@ jobs:
           curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
           stellar --version
 
-      - name: Setup identity and fund
-        env:
-          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+      - name: Fund deployer via Friendbot
         run: |
-          # Create keystore directory and write identity file manually
-          mkdir -p ~/.config/stellar/identity
-          cat > ~/.config/stellar/identity/deployer.toml << KEYEOF
-          secret_key = "$STELLAR_SECRET_KEY"
-          KEYEOF
-          echo "Identity file created"
-
-          # Add network config
-          mkdir -p ~/.config/stellar/network
-          cat > ~/.config/stellar/network/testnet.toml << NETEOF
-          rpc_url = "https://soroban-testnet.stellar.org"
-          network_passphrase = "Test SDF Network ; September 2015"
-          NETEOF
-          echo "Network config created"
-
-          # Fund
           curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" \
             | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
             || echo "May already be funded"
@@ -85,8 +69,9 @@ jobs:
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
           CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM" \
-            --source deployer \
-            --network testnet)
+            --source-account "$SOROBAN_SECRET_KEY" \
+            --rpc-url "https://soroban-testnet.stellar.org" \
+            --network-passphrase "Test SDF Network ; September 2015")
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
@@ -94,7 +79,10 @@ jobs:
       - name: Initialize contract
         run: |
           stellar contract invoke \
-            --id "$CONTRACT_ID" --source deployer --network testnet \
+            --id "$CONTRACT_ID" \
+            --source-account "$SOROBAN_SECRET_KEY" \
+            --rpc-url "https://soroban-testnet.stellar.org" \
+            --network-passphrase "Test SDF Network ; September 2015" \
             -- initialize \
             --admin "$DEPLOYER_ADDR" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
@@ -102,8 +90,12 @@ jobs:
       - name: Whitelist deployer
         run: |
           stellar contract invoke \
-            --id "$CONTRACT_ID" --source deployer --network testnet \
-            -- whitelist_institution --institution "$DEPLOYER_ADDR"
+            --id "$CONTRACT_ID" \
+            --source-account "$SOROBAN_SECRET_KEY" \
+            --rpc-url "https://soroban-testnet.stellar.org" \
+            --network-passphrase "Test SDF Network ; September 2015" \
+            -- whitelist_institution \
+            --institution "$DEPLOYER_ADDR"
 
       - name: Save receipt
         run: |
