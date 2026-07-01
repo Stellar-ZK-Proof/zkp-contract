@@ -66,7 +66,10 @@ jobs:
           python3 -c "import json; d=json.load(open('/tmp/fb.json')); print('Funded:', d.get('hash','already funded'))" 2>/dev/null || echo "May already be funded"
 
       - name: Install deploy dependencies
-        run: cd scripts && npm install
+        run: |
+          cd scripts
+          rm -f package-lock.json node_modules/@stellar/stellar-sdk/package.json 2>/dev/null || true
+          npm install --prefer-online
 
       - name: Deploy, initialize and whitelist
         shell: bash
