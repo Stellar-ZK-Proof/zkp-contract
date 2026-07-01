@@ -1,3 +1,5 @@
 target/
 .DS_Store
 # Keep circuits/ committed
+deploy_log.txt
+deployment.json
