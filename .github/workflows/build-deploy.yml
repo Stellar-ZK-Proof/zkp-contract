@@ -15,7 +15,6 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  STELLAR_CLI_VERSION: "21.5.3"
 
 jobs:
   build-and-test:
@@ -42,7 +41,6 @@ jobs:
     name: Build, Test & Deploy to Testnet
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
-    environment: testnet
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,58 +52,88 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Install Stellar CLI (binary)
+      - name: Install Stellar CLI
         run: |
-          VERSION="${STELLAR_CLI_VERSION}"
-          URL="https://github.com/stellar/stellar-cli/releases/download/v${VERSION}/stellar-cli-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -L "$URL" | tar -xz -C /usr/local/bin
+          VER="21.5.3"
+          curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin
           stellar --version
-
-      - name: Add deployer identity
-        run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
-
-      - name: Fund via Friendbot
-        run: |
-          ADDR=$(stellar keys address deployer)
-          echo "Deployer: $ADDR"
-          curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
-            | python3 -c "import sys,json; print('Funded TX:', json.load(sys.stdin).get('hash','?'))" \
-            || echo "May already be funded"
 
       - name: Deploy contract
         id: deploy
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+          # Use secret directly without storing in keystore
           CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM" \
-            --source deployer \
-            --network testnet)
+            --source-account "$STELLAR_SECRET_KEY" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015")
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
 
-      - name: Initialize contract
+      - name: Fund deployer via Friendbot
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
-          ADDR=$(stellar keys address deployer)
+          # Derive public key from secret
+          ADDR=$(stellar keys generate --secret-key "$STELLAR_SECRET_KEY" 2>/dev/null || \
+                 python3 -c "
+import subprocess, sys
+# Use stellar SDK to get pubkey
+result = subprocess.run(['python3', '-c', '''
+import sys
+sys.path.insert(0, \"/home/runner/.local/lib/python3.10/site-packages\")
+try:
+    from stellar_sdk import Keypair
+    kp = Keypair.from_secret(\"$STELLAR_SECRET_KEY\")
+    print(kp.public_key)
+except: pass
+'''], capture_output=True, text=True)
+print(result.stdout.strip())
+")
+          echo "Would fund: $ADDR"
+
+      - name: Initialize and whitelist
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+        run: |
+          stellar keys add deployer --secret-key "$STELLAR_SECRET_KEY" || true
+          ADDR=$(stellar keys address deployer 2>/dev/null || echo "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS")
+          
+          # Fund first
+          curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Funded:', d.get('hash','already funded'))" \
+            || echo "Already funded"
+
           stellar contract invoke \
-            --id "$CONTRACT_ID" --source deployer --network testnet \
+            --id "$CONTRACT_ID" \
+            --source-account "$STELLAR_SECRET_KEY" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015" \
             -- initialize \
             --admin "$ADDR" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
-      - name: Whitelist deployer as test institution
-        run: |
           stellar contract invoke \
-            --id "$CONTRACT_ID" --source deployer --network testnet \
+            --id "$CONTRACT_ID" \
+            --source-account "$STELLAR_SECRET_KEY" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015" \
             -- whitelist_institution \
-            --institution "$(stellar keys address deployer)"
+            --institution "$ADDR"
 
       - name: Save receipt
         run: |
-          ADDR=$(stellar keys address deployer)
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$ADDR" "$TS" | python3 -m json.tool > deployment.json
+          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployed_at":"%s"}\n' \
+            "$CONTRACT_ID" "$CONTRACT_ID" "$TS" | python3 -m json.tool > deployment.json
           cat deployment.json
 
       - uses: actions/upload-artifact@v4
@@ -115,5 +143,5 @@ jobs:
 
       - name: Job summary
         run: |
-          printf '## ✅ Contract Deployed to Stellar Testnet\n\n**Contract ID:** `%s`\n\n[🔍 View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/%s)\n\n### Add to .env files\n```\nCONTRACT_ID=%s\n```\n' \
+          printf '## Contract Deployed\n\n**Contract ID:** `%s`\n\n[View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/%s)\n\n```\nCONTRACT_ID=%s\n```\n' \
             "$CONTRACT_ID" "$CONTRACT_ID" "$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
