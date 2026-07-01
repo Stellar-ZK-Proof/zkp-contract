@@ -15,6 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  STELLAR_CLI_VERSION: "21.5.3"
 
 jobs:
   build-and-test:
@@ -52,47 +53,67 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
         run: cargo test
-      - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli@21.7.1 --features opt
+
+      - name: Install Stellar CLI (binary)
+        run: |
+          VERSION="${STELLAR_CLI_VERSION}"
+          URL="https://github.com/stellar/stellar-cli/releases/download/v${VERSION}/stellar-cli-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -L "$URL" | tar -xz -C /usr/local/bin
+          stellar --version
+
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
+
       - name: Fund via Friendbot
         run: |
           ADDR=$(stellar keys address deployer)
           echo "Deployer: $ADDR"
           curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
-            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
+            | python3 -c "import sys,json; print('Funded TX:', json.load(sys.stdin).get('hash','?'))" \
             || echo "May already be funded"
+
       - name: Deploy contract
         id: deploy
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          CONTRACT_ID=$(stellar contract deploy --wasm "$WASM" --source deployer --network testnet)
+          CONTRACT_ID=$(stellar contract deploy \
+            --wasm "$WASM" \
+            --source deployer \
+            --network testnet)
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
+
       - name: Initialize contract
         run: |
-          stellar contract invoke --id "$CONTRACT_ID" --source deployer --network testnet \
+          ADDR=$(stellar keys address deployer)
+          stellar contract invoke \
+            --id "$CONTRACT_ID" --source deployer --network testnet \
             -- initialize \
-            --admin "$(stellar keys address deployer)" \
+            --admin "$ADDR" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
-      - name: Whitelist deployer
+
+      - name: Whitelist deployer as test institution
         run: |
-          stellar contract invoke --id "$CONTRACT_ID" --source deployer --network testnet \
-            -- whitelist_institution --institution "$(stellar keys address deployer)"
+          stellar contract invoke \
+            --id "$CONTRACT_ID" --source deployer --network testnet \
+            -- whitelist_institution \
+            --institution "$(stellar keys address deployer)"
+
       - name: Save receipt
         run: |
           ADDR=$(stellar keys address deployer)
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$ADDR" "$TS" > deployment.json
+            "$CONTRACT_ID" "$CONTRACT_ID" "$ADDR" "$TS" | python3 -m json.tool > deployment.json
           cat deployment.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: deployment-receipt
           path: deployment.json
+
       - name: Job summary
         run: |
-          printf '## Contract Deployed\n\n**Contract ID:** `%s`\n\n[View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/%s)\n\n```\nCONTRACT_ID=%s\n```\n' \
+          printf '## ✅ Contract Deployed to Stellar Testnet\n\n**Contract ID:** `%s`\n\n[🔍 View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/%s)\n\n### Add to .env files\n```\nCONTRACT_ID=%s\n```\n' \
             "$CONTRACT_ID" "$CONTRACT_ID" "$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
