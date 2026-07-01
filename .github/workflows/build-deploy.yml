@@ -14,8 +14,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: never
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
 
 jobs:
   build-and-test:
@@ -28,11 +26,22 @@ jobs:
         with:
           toolchain: '1.81'
           targets: wasm32-unknown-unknown
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Fetch dependencies
+        run: |
+          cargo fetch 2>&1 | tee /tmp/fetch.log || true
+          echo "## Fetch output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/fetch.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-      - name: Run tests
-        run: cargo test -- --nocapture
+        run: |
+          cargo build --target wasm32-unknown-unknown --release 2>&1 | tee /tmp/build.log || true
+          echo "## Build output (last 80 lines)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -80 /tmp/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          test -f target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+      - run: cargo test -- --nocapture
       - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
@@ -50,15 +59,13 @@ jobs:
         with:
           toolchain: '1.81'
           targets: wasm32-unknown-unknown
-      - uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Fetch dependencies
+        run: cargo fetch 2>&1
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
         run: cargo test -- --nocapture
       - name: Install Stellar CLI
-        env:
-          RUSTC_WRAPPER: ""
-          SCCACHE_GHA_ENABLED: "false"
         run: cargo install --locked stellar-cli@22.0.1 --features opt
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
