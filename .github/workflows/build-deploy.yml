@@ -23,8 +23,7 @@ jobs:
     if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
@@ -45,8 +44,7 @@ jobs:
     environment: testnet
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
@@ -55,7 +53,7 @@ jobs:
       - name: Run tests
         run: cargo test
       - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli --features opt
+        run: cargo install --locked stellar-cli@21.7.1 --features opt
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
       - name: Fund via Friendbot
