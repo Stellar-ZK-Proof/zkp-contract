@@ -82,6 +82,11 @@ jobs:
             echo "=== STDOUT ==="
             cat /tmp/deploy_stdout.txt
           } > /tmp/deploy_log.txt
+          # Write to step summary (readable via API)
+          echo "## Deploy Log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/deploy_log.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
           cat /tmp/deploy_log.txt
           if [ $NODE_EXIT -ne 0 ]; then
             exit $NODE_EXIT
