@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
   DEPLOYER_ADDRESS: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
+  NETWORK: "testnet"
   NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
   RPC_URL: "https://soroban-testnet.stellar.org"
 
@@ -61,11 +62,18 @@ jobs:
           curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
           stellar --version
 
+      - name: Configure Stellar network + identity
+        run: |
+          stellar network add testnet \
+            --rpc-url "$RPC_URL" \
+            --network-passphrase "$NETWORK_PASSPHRASE"
+          echo "${{ secrets.STELLAR_SECRET_KEY }}" | stellar keys add deployer --secret-key
+          echo "Identity added. Address: $(stellar keys address deployer)"
+
       - name: Fund deployer via Friendbot
         run: |
-          echo "Funding $DEPLOYER_ADDRESS"
           curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDRESS" \
-            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','already funded'))" \
+            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
             || echo "May already be funded"
 
       - name: Deploy contract
@@ -74,9 +82,8 @@ jobs:
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
           CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM" \
-            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
-            --rpc-url "$RPC_URL" \
-            --network-passphrase "$NETWORK_PASSPHRASE")
+            --source deployer \
+            --network testnet)
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
@@ -85,9 +92,8 @@ jobs:
         run: |
           stellar contract invoke \
             --id "$CONTRACT_ID" \
-            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
-            --rpc-url "$RPC_URL" \
-            --network-passphrase "$NETWORK_PASSPHRASE" \
+            --source deployer \
+            --network testnet \
             -- initialize \
             --admin "$DEPLOYER_ADDRESS" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
@@ -96,9 +102,8 @@ jobs:
         run: |
           stellar contract invoke \
             --id "$CONTRACT_ID" \
-            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
-            --rpc-url "$RPC_URL" \
-            --network-passphrase "$NETWORK_PASSPHRASE" \
+            --source deployer \
+            --network testnet \
             -- whitelist_institution \
             --institution "$DEPLOYER_ADDRESS"
 
