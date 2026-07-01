@@ -69,27 +69,38 @@ jobs:
       - name: Deploy, initialize and whitelist
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
           echo "Running deploy script..."
-          # Run with explicit bash and capture output
-          node scripts/deploy.mjs "$WASM" >/tmp/deploy_stdout.txt 2>/tmp/deploy_stderr.txt
+          node scripts/deploy.mjs "$WASM" >/tmp/deploy_stdout.txt 2>/tmp/deploy_stderr.txt || true
           NODE_EXIT=$?
-          echo "=== Node.js stderr ==="
-          cat /tmp/deploy_stderr.txt
-          echo "=== Node.js stdout ==="
-          cat /tmp/deploy_stdout.txt
+          # Always write logs artifact
+          {
+            echo "=== EXIT CODE: $NODE_EXIT ==="
+            echo "=== STDERR ==="
+            cat /tmp/deploy_stderr.txt
+            echo "=== STDOUT ==="
+            cat /tmp/deploy_stdout.txt
+          } > /tmp/deploy_log.txt
+          cat /tmp/deploy_log.txt
           if [ $NODE_EXIT -ne 0 ]; then
-            echo "::error title=Deploy Failed::$(tail -5 /tmp/deploy_stderr.txt)"
             exit $NODE_EXIT
           fi
           CONTRACT_ID=$(cat /tmp/deploy_stdout.txt | tr -d "[:space:]")
           if [ -z "$CONTRACT_ID" ]; then
-            echo "::error::No contract ID in output"
+            echo "ERROR: No contract ID in output"
             exit 1
           fi
           echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
           echo "Deployed: $CONTRACT_ID"
+
+      - name: Upload deploy log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-log
+          path: /tmp/deploy_log.txt
+          retention-days: 3
 
       - name: Save deployment receipt
         run: |
