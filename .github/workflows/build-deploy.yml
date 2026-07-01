@@ -14,6 +14,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: never
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_TIMEOUT: "30"
 
 jobs:
   build-and-test:
@@ -26,8 +29,6 @@ jobs:
         with:
           toolchain: '1.84'
           targets: wasm32-unknown-unknown
-      - name: Fetch dependencies
-        run: cargo fetch 2>&1
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release 2>&1
       - name: Run tests
@@ -49,8 +50,6 @@ jobs:
         with:
           toolchain: '1.84'
           targets: wasm32-unknown-unknown
-      - name: Fetch dependencies
-        run: cargo fetch 2>&1
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release 2>&1
       - name: Run tests
