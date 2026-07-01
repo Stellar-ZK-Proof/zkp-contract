@@ -1,0 +1,18 @@
+=== EXIT CODE: 0 ===
+=== STDERR ===
+Deployer: GA2LCOB7EO77Q52NO4R3TJ2UTAV7NG3P7S26QUV2YSMIE7UHNUWKBE7V
+WASM path: target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+WASM size: 6157 bytes
+Step 1: Uploading WASM...
+  TX hash: 7455351a7a6c0f9309c29112028de9da77498399138bdc9ebda81dc0f0f93b75 - polling...
+FATAL ERROR: Bad union switch: 4
+TypeError: Bad union switch: 4
+    at ChildUnion.armForSwitch (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:1753:11)
+    at ChildUnion.read (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:1767:22)
+    at ChildUnion.fromXDR (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:2180:25)
+    at parseTransactionInfo (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/stellar-sdk/lib/rpc/parsers.js:37:47)
+    at /home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/stellar-sdk/lib/rpc/server.js:348:78
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async sendTx (file:///home/runner/work/zkp-contract/zkp-contract/scripts/deploy.mjs:39:18)
+    at async main (file:///home/runner/work/zkp-contract/zkp-contract/scripts/deploy.mjs:68:21)
+=== STDOUT ===
