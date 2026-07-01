@@ -69,14 +69,8 @@ jobs:
 
       - name: Fund account
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print('Funded TX:', d.get('hash', d))
-except:
-    print('Friendbot response not JSON (may already be funded)')
-" || true
+          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" -o /tmp/fb.json || true
+          python3 -c "import json; d=json.load(open('/tmp/fb.json')); print('Funded:', d.get('hash', 'already funded'))" 2>/dev/null || echo "Already funded or friendbot error"
 
       - name: Deploy contract
         run: |
@@ -129,18 +123,7 @@ except:
       - name: Save deployment receipt
         run: |
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          python3 -c "
-import json
-receipt = {
-  'contract_id': '$CONTRACT_ID',
-  'network': 'testnet',
-  'explorer': 'https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID',
-  'deployer': '$DEPLOYER_ADDR',
-  'deployed_at': '$TS'
-}
-print(json.dumps(receipt, indent=2))
-open('deployment.json','w').write(json.dumps(receipt, indent=2))
-"
+          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}'             "$CONTRACT_ID" "$CONTRACT_ID" "$DEPLOYER_ADDR" "$TS" | python3 -m json.tool > deployment.json
           cat deployment.json
 
       - uses: actions/upload-artifact@v4
