@@ -75,17 +75,23 @@ jobs:
       - name: Deploy contract
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+          # Capture all output (stellar-cli may write contract ID to either stream)
           stellar contract deploy \
             --wasm "$WASM" \
             --source deployer \
             --rpc-url "$RPC" \
             --network-passphrase "$NET" \
-            --fee 1000000 \
-            > /tmp/contract_id.txt 2>&1
-          cat /tmp/contract_id.txt
-          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/contract_id.txt | head -1)
+            --fee 1000000 2>&1 | tee /tmp/deploy_out.txt
+          echo "--- Full deploy output above ---"
+          # Extract Stellar contract ID (starts with C, base32 strkey format)
+          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/deploy_out.txt | head -1)
+          if [ -z "$CONTRACT_ID" ]; then
+            echo "ERROR: No contract ID found in output. Full output:"
+            cat /tmp/deploy_out.txt
+            exit 1
+          fi
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-          echo "Deployed: $CONTRACT_ID"
+          echo "Deployed contract: $CONTRACT_ID"
 
       - name: Initialize contract
         run: |
