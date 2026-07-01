@@ -67,24 +67,28 @@ jobs:
         run: cd scripts && npm install
 
       - name: Deploy, initialize and whitelist
+        shell: bash
         run: |
+          set -euo pipefail
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          node scripts/deploy.mjs "$WASM" 2>/tmp/deploy_err.txt | tee /tmp/deploy_out.txt
-          EXIT=${PIPESTATUS[0]}
-          echo "=== STDERR ==="
-          cat /tmp/deploy_err.txt || true
-          echo "=== STDOUT ==="
-          cat /tmp/deploy_out.txt || true
-          if [ $EXIT -ne 0 ]; then
-            echo "::error::Deploy failed. See stderr above."
-            exit $EXIT
+          echo "Running deploy script..."
+          # Run with explicit bash and capture output
+          node scripts/deploy.mjs "$WASM" >/tmp/deploy_stdout.txt 2>/tmp/deploy_stderr.txt
+          NODE_EXIT=$?
+          echo "=== Node.js stderr ==="
+          cat /tmp/deploy_stderr.txt
+          echo "=== Node.js stdout ==="
+          cat /tmp/deploy_stdout.txt
+          if [ $NODE_EXIT -ne 0 ]; then
+            echo "::error title=Deploy Failed::$(tail -5 /tmp/deploy_stderr.txt)"
+            exit $NODE_EXIT
           fi
-          CONTRACT_ID=$(tail -1 /tmp/deploy_out.txt | tr -d "[:space:]")
+          CONTRACT_ID=$(cat /tmp/deploy_stdout.txt | tr -d "[:space:]")
           if [ -z "$CONTRACT_ID" ]; then
             echo "::error::No contract ID in output"
             exit 1
           fi
-          echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
+          echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
           echo "Deployed: $CONTRACT_ID"
 
       - name: Save deployment receipt
