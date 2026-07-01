@@ -12,7 +12,7 @@ const WASM_PATH   = process.argv[2] || "target/wasm32-unknown-unknown/release/zk
 const SECRET      = process.env.SOROBAN_SECRET_KEY;
 const RPC_URL     = "https://soroban-testnet.stellar.org";
 const NET         = Networks.TESTNET;
-const DEPLOYER    = process.env.DEPLOYER_ADDR || "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS";
+const DEPLOYER    = process.env.DEPLOYER_ADDR || "GA2LCOB7EO77Q52NO4R3TJ2UTAV7NG3P7S26QUV2YSMIE7UHNUWKBE7V";
 const FEE         = "1000000"; // 0.1 XLM
 
 if (!SECRET) { log("ERROR: SOROBAN_SECRET_KEY not set"); process.exit(1); }

@@ -15,7 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  DEPLOYER_ADDR: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
+  DEPLOYER_ADDR: "GA2LCOB7EO77Q52NO4R3TJ2UTAV7NG3P7S26QUV2YSMIE7UHNUWKBE7V"
   RPC: "https://soroban-testnet.stellar.org"
   NET: "Test SDF Network ; September 2015"
 
@@ -69,9 +69,19 @@ jobs:
       - name: Deploy, initialize and whitelist
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          CONTRACT_ID=$(node scripts/deploy.mjs "$WASM")
+          node scripts/deploy.mjs "$WASM" 2>/tmp/deploy_err.txt | tee /tmp/deploy_out.txt
+          EXIT=${PIPESTATUS[0]}
+          echo "=== STDERR ==="
+          cat /tmp/deploy_err.txt || true
+          echo "=== STDOUT ==="
+          cat /tmp/deploy_out.txt || true
+          if [ $EXIT -ne 0 ]; then
+            echo "::error::Deploy failed. See stderr above."
+            exit $EXIT
+          fi
+          CONTRACT_ID=$(tail -1 /tmp/deploy_out.txt | tr -d "[:space:]")
           if [ -z "$CONTRACT_ID" ]; then
-            echo "Deploy failed - no contract ID returned"
+            echo "::error::No contract ID in output"
             exit 1
           fi
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
