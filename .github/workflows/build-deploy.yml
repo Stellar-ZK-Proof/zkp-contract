@@ -15,6 +15,9 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  DEPLOYER_ADDRESS: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
+  NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+  RPC_URL: "https://soroban-testnet.stellar.org"
 
 jobs:
   build-and-test:
@@ -55,85 +58,56 @@ jobs:
       - name: Install Stellar CLI
         run: |
           VER="21.5.3"
-          curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar -xz -C /usr/local/bin
+          curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
           stellar --version
+
+      - name: Fund deployer via Friendbot
+        run: |
+          echo "Funding $DEPLOYER_ADDRESS"
+          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDRESS" \
+            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','already funded'))" \
+            || echo "May already be funded"
 
       - name: Deploy contract
         id: deploy
-        env:
-          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          # Use secret directly without storing in keystore
           CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM" \
-            --source-account "$STELLAR_SECRET_KEY" \
-            --network testnet \
-            --rpc-url https://soroban-testnet.stellar.org \
-            --network-passphrase "Test SDF Network ; September 2015")
+            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
+            --rpc-url "$RPC_URL" \
+            --network-passphrase "$NETWORK_PASSPHRASE")
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
 
-      - name: Fund deployer via Friendbot
-        env:
-          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+      - name: Initialize contract
         run: |
-          # Derive public key from secret
-          ADDR=$(stellar keys generate --secret-key "$STELLAR_SECRET_KEY" 2>/dev/null || \
-                 python3 -c "
-import subprocess, sys
-# Use stellar SDK to get pubkey
-result = subprocess.run(['python3', '-c', '''
-import sys
-sys.path.insert(0, \"/home/runner/.local/lib/python3.10/site-packages\")
-try:
-    from stellar_sdk import Keypair
-    kp = Keypair.from_secret(\"$STELLAR_SECRET_KEY\")
-    print(kp.public_key)
-except: pass
-'''], capture_output=True, text=True)
-print(result.stdout.strip())
-")
-          echo "Would fund: $ADDR"
-
-      - name: Initialize and whitelist
-        env:
-          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
-        run: |
-          stellar keys add deployer --secret-key "$STELLAR_SECRET_KEY" || true
-          ADDR=$(stellar keys address deployer 2>/dev/null || echo "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS")
-          
-          # Fund first
-          curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Funded:', d.get('hash','already funded'))" \
-            || echo "Already funded"
-
           stellar contract invoke \
             --id "$CONTRACT_ID" \
-            --source-account "$STELLAR_SECRET_KEY" \
-            --network testnet \
-            --rpc-url https://soroban-testnet.stellar.org \
-            --network-passphrase "Test SDF Network ; September 2015" \
+            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
+            --rpc-url "$RPC_URL" \
+            --network-passphrase "$NETWORK_PASSPHRASE" \
             -- initialize \
-            --admin "$ADDR" \
+            --admin "$DEPLOYER_ADDRESS" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
+      - name: Whitelist deployer as test institution
+        run: |
           stellar contract invoke \
             --id "$CONTRACT_ID" \
-            --source-account "$STELLAR_SECRET_KEY" \
-            --network testnet \
-            --rpc-url https://soroban-testnet.stellar.org \
-            --network-passphrase "Test SDF Network ; September 2015" \
+            --source-account "${{ secrets.STELLAR_SECRET_KEY }}" \
+            --rpc-url "$RPC_URL" \
+            --network-passphrase "$NETWORK_PASSPHRASE" \
             -- whitelist_institution \
-            --institution "$ADDR"
+            --institution "$DEPLOYER_ADDRESS"
 
       - name: Save receipt
         run: |
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployed_at":"%s"}\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$TS" | python3 -m json.tool > deployment.json
+          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
+            "$CONTRACT_ID" "$CONTRACT_ID" "$DEPLOYER_ADDRESS" "$TS" \
+            | python3 -m json.tool > deployment.json
           cat deployment.json
 
       - uses: actions/upload-artifact@v4
