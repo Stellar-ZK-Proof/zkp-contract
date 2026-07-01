@@ -67,7 +67,11 @@ async function main() {
   const salt = Buffer.alloc(32);
   salt.writeUInt32BE(Math.floor(Date.now() / 1000) & 0xFFFFFFFF, 0);
   const cr = await sendTx(await buildTx(
-    Operation.createCustomContract({ wasmHash, salt })
+    Operation.createCustomContract({
+      wasmHash,
+      salt,
+      address: new Address(kp.publicKey())
+    })
   ));
   if (!cr.returnValue) throw new Error("No return from createCustomContract");
   log("Return type:", cr.returnValue.switch()?.name);
