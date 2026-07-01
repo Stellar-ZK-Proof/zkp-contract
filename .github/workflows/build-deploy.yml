@@ -1,0 +1,111 @@
+name: Build & Deploy Contract
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to testnet?'
+        required: true
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.81'
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli@22.0.1 --features opt
+
+      - name: Build contract
+        run: stellar contract build
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zkp-private-pay-wasm
+          path: target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+          retention-days: 30
+
+  deploy-testnet:
+    name: Deploy to Stellar Testnet
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event.inputs.deploy == 'true' || github.event_name == 'workflow_dispatch')
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + Stellar CLI
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.81'
+          targets: wasm32-unknown-unknown
+
+      - run: cargo install --locked stellar-cli@22.0.1 --features opt
+
+      - name: Download WASM
+        uses: actions/download-artifact@v4
+        with:
+          name: zkp-private-pay-wasm
+
+      - name: Configure Stellar identity
+        run: |
+          stellar keys add deployer --secret-key ${{ secrets.STELLAR_SECRET_KEY }}
+
+      - name: Deploy contract
+        id: deploy
+        run: |
+          CONTRACT_ID=$(stellar contract deploy \
+            --wasm zkp_private_pay.wasm \
+            --source deployer \
+            --network testnet)
+          echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
+          echo "Deployed: $CONTRACT_ID"
+
+      - name: Initialize contract
+        run: |
+          stellar contract invoke \
+            --id ${{ steps.deploy.outputs.contract_id }} \
+            --source deployer \
+            --network testnet \
+            -- initialize \
+            --admin $(stellar keys address deployer) \
+            --verifier_key_hash 0000000000000000000000000000000000000000000000000000000000000001
+
+      - name: Write deployment receipt
+        run: |
+          echo "{\"contract_id\": \"${{ steps.deploy.outputs.contract_id }}\", \"network\": \"testnet\", \"deployed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"deployer\": \"$(stellar keys address deployer)\"}" > deployment.json
+          cat deployment.json
+
+      - name: Upload deployment receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-receipt
+          path: deployment.json
