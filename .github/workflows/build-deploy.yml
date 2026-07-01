@@ -12,17 +12,25 @@ on:
         type: choice
         options: ['true', 'false']
 
+env:
+  CARGO_TERM_COLOR: never
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
 jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
-    container:
-      image: stellar/stellar-cli:v22.0.1
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.81'
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.5
       - name: Build WASM
-        run: stellar contract build
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
         run: cargo test -- --nocapture
       - uses: actions/upload-artifact@v4
@@ -36,14 +44,22 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
     environment: testnet
-    container:
-      image: stellar/stellar-cli:v22.0.1
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.81'
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@v0.0.5
       - name: Build WASM
-        run: stellar contract build
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
         run: cargo test -- --nocapture
+      - name: Install Stellar CLI
+        env:
+          RUSTC_WRAPPER: ""
+          SCCACHE_GHA_ENABLED: "false"
+        run: cargo install --locked stellar-cli@22.0.1 --features opt
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
       - name: Fund via Friendbot
