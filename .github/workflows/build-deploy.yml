@@ -56,14 +56,12 @@ jobs:
           stellar --version
 
       - name: Setup Stellar identity
+        env:
+          SECRET: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
-          # Write identity TOML (no leading spaces — heredoc must be at column 0)
           mkdir -p ~/.config/stellar/identity
-          cat > ~/.config/stellar/identity/deployer.toml << 'TOMLEOF'
-{"secret_key": "${{ secrets.STELLAR_SECRET_KEY }}"}
-TOMLEOF
-          echo "Identity written"
-          cat ~/.config/stellar/identity/deployer.toml
+          printf '{"secret_key":"%s"}\n' "$SECRET" > ~/.config/stellar/identity/deployer.toml
+          echo "Identity file written (secret hidden)"
 
       - name: Fund deployer via Friendbot
         run: |
@@ -75,13 +73,12 @@ TOMLEOF
         id: deploy
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          stellar contract deploy \
+          CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM" \
             --source deployer \
             --rpc-url "https://soroban-testnet.stellar.org" \
             --network-passphrase "Test SDF Network ; September 2015" \
-            2>&1 | tee /tmp/deploy.log
-          CONTRACT_ID=$(tail -1 /tmp/deploy.log | tr -d '[:space:]')
+            2>&1 | tail -1 | tr -d '[:space:]')
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
           echo "Deployed: $CONTRACT_ID"
