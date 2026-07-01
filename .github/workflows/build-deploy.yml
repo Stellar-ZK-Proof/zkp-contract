@@ -12,29 +12,19 @@ on:
         type: choice
         options: ['true', 'false']
 
-env:
-  CARGO_TERM_COLOR: never
-
 jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
+    container:
+      image: stellar/stellar-cli:v22.0.1
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.81'
-          targets: wasm32-unknown-unknown
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/
-          key: ${{ runner.os }}-soroban-cargo
-      - run: cargo build --target wasm32-unknown-unknown --release
-      - run: cargo test -- --nocapture
+      - name: Build WASM
+        run: stellar contract build
+      - name: Run tests
+        run: cargo test -- --nocapture
       - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
@@ -46,25 +36,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
     environment: testnet
+    container:
+      image: stellar/stellar-cli:v22.0.1
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.81'
-          targets: wasm32-unknown-unknown
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/
-          key: ${{ runner.os }}-soroban-cargo
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: stellar contract build
       - name: Run tests
         run: cargo test -- --nocapture
-      - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli@22.0.1 --features opt
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
       - name: Fund via Friendbot
