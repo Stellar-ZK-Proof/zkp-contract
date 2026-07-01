@@ -1,18 +1,15 @@
 === EXIT CODE: 0 ===
 === STDERR ===
 Deployer: GA2LCOB7EO77Q52NO4R3TJ2UTAV7NG3P7S26QUV2YSMIE7UHNUWKBE7V
-WASM path: target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-WASM size: 6157 bytes
-Step 1: Uploading WASM...
-  TX hash: 348bf108de2349b0c89da2708a6b29b9a2c4b4eded5335d76f3fd97f02531465 - polling...
-FATAL ERROR: Bad union switch: 4
-TypeError: Bad union switch: 4
-    at ChildUnion.armForSwitch (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:1753:11)
-    at ChildUnion.read (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:1767:22)
-    at ChildUnion.fromXDR (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/js-xdr/lib/xdr.js:2180:25)
-    at parseTransactionInfo (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/stellar-sdk/lib/rpc/parsers.js:37:47)
-    at /home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/stellar-sdk/lib/rpc/server.js:348:78
+WASM: 6157 bytes
+Step 1: Upload WASM...
+  TX: e202ef155000522df34520dc9bc80200efe17daa4d6d7c8b41a6f0ecc5fefdb4 polling...
+  confirmed ✓
+Hash: fd3be48e300d27ad...
+Step 2: Create contract instance...
+FATAL: Cannot read properties of undefined (reading 'toScAddress')
+TypeError: Cannot read properties of undefined (reading 'toScAddress')
+    at Operation.createCustomContract (/home/runner/work/zkp-contract/zkp-contract/scripts/node_modules/@stellar/stellar-sdk/lib/cjs/base/operations/invoke_host_function.js:83:35)
+    at main (file:///home/runner/work/zkp-contract/zkp-contract/scripts/deploy.mjs:70:15)
     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
-    at async sendTx (file:///home/runner/work/zkp-contract/zkp-contract/scripts/deploy.mjs:39:18)
-    at async main (file:///home/runner/work/zkp-contract/zkp-contract/scripts/deploy.mjs:68:21)
 === STDOUT ===
