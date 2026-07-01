@@ -34,13 +34,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-v3-
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-v2-
       - name: Build WASM
-        run: |
-          cargo build --target wasm32-unknown-unknown --release
-          echo "## Build OK" >> $GITHUB_STEP_SUMMARY
-          du -h target/wasm32-unknown-unknown/release/zkp_private_pay.wasm >> $GITHUB_STEP_SUMMARY
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
         run: cargo test -- --nocapture
       - name: Upload WASM
@@ -69,8 +66,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-v3-
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-v2-
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
@@ -106,7 +103,7 @@ jobs:
         run: |
           ADDR=$(stellar keys address deployer)
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          printf '{\n  "contract_id": "%s",\n  "network": "testnet",\n  "explorer": "https://stellar.expert/explorer/testnet/contract/%s",\n  "deployer": "%s",\n  "deployed_at": "%s"\n}\n' \
+          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
             "$CONTRACT_ID" "$CONTRACT_ID" "$ADDR" "$TS" > deployment.json
           cat deployment.json
       - name: Upload receipt
