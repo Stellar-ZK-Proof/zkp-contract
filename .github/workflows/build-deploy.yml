@@ -44,98 +44,103 @@ jobs:
     if: github.event.inputs.deploy == 'true'
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-      - run: cargo build --target wasm32-unknown-unknown --release
-      - run: cargo test
+
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Run tests
+        run: cargo test
 
       - name: Install Stellar CLI
         run: |
-          VER="21.5.3"
-          curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
-          stellar --version
+          curl -L "https://github.com/stellar/stellar-cli/releases/download/v21.5.3/stellar-cli-21.5.3-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
 
-      - name: Setup Stellar identity
+      - name: Write identity file
         env:
           SECRET: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
           mkdir -p ~/.config/stellar/identity
           printf '{"secret_key":"%s"}\n' "$SECRET" > ~/.config/stellar/identity/deployer.toml
 
-      - name: Fund and deploy (with retry)
-        id: deploy
+      - name: Fund account
         run: |
-          # Fund
-          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" \
-            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
-            || echo "May already be funded"
+          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print('Funded TX:', d.get('hash', d))
+except:
+    print('Friendbot response not JSON (may already be funded)')
+" || true
 
+      - name: Deploy contract
+        run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-
-          # Retry deploy up to 3 times
-          for attempt in 1 2 3; do
-            echo "Deploy attempt $attempt..."
-            OUTPUT=$(stellar contract deploy \
-              --wasm "$WASM" \
-              --source deployer \
-              --rpc-url "$RPC" \
-              --network-passphrase "$NET" \
-              --fee 1000000 2>&1)
-            echo "$OUTPUT"
-            CONTRACT_ID=$(echo "$OUTPUT" | grep -oE 'C[A-Z2-7]{55}' | head -1)
-            if [ -n "$CONTRACT_ID" ]; then
-              echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
-              echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-              echo "SUCCESS: $CONTRACT_ID"
-              break
-            fi
-            echo "Attempt $attempt failed, waiting 15s..."
-            sleep 15
-          done
-
-          if [ -z "$CONTRACT_ID" ]; then
-            echo "All deploy attempts failed"
-            exit 1
-          fi
+          stellar contract deploy \
+            --wasm "$WASM" \
+            --source deployer \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
+            > /tmp/contract_id.txt 2>&1
+          cat /tmp/contract_id.txt
+          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/contract_id.txt | head -1)
+          echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
+          echo "Deployed: $CONTRACT_ID"
 
       - name: Initialize contract
         run: |
-          echo "Initializing: $CONTRACT_ID"
-          for attempt in 1 2 3; do
-            stellar contract invoke \
-              --id "$CONTRACT_ID" \
-              --source deployer \
-              --rpc-url "$RPC" \
-              --network-passphrase "$NET" \
-              --fee 1000000 \
-              -- initialize \
-              --admin "$DEPLOYER_ADDR" \
-              --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001" \
-              2>&1 && break || (echo "Init attempt $attempt failed, retrying..."; sleep 10)
-          done
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source deployer \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
+            -- initialize \
+            --admin "$DEPLOYER_ADDR" \
+            --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
-      - name: Whitelist deployer
+      - name: Whitelist deployer as institution
         run: |
-          for attempt in 1 2 3; do
-            stellar contract invoke \
-              --id "$CONTRACT_ID" \
-              --source deployer \
-              --rpc-url "$RPC" \
-              --network-passphrase "$NET" \
-              --fee 1000000 \
-              -- whitelist_institution \
-              --institution "$DEPLOYER_ADDR" \
-              2>&1 && break || (echo "Whitelist attempt $attempt failed, retrying..."; sleep 10)
-          done
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source deployer \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
+            -- whitelist_institution \
+            --institution "$DEPLOYER_ADDR"
 
-      - name: Save receipt
+      - name: Verify deployment
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source deployer \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            -- get_admin
+          echo "Contract verified ✓"
+
+      - name: Save deployment receipt
         run: |
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$DEPLOYER_ADDR" "$TS" \
-            | python3 -m json.tool > deployment.json
+          python3 -c "
+import json
+receipt = {
+  'contract_id': '$CONTRACT_ID',
+  'network': 'testnet',
+  'explorer': 'https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID',
+  'deployer': '$DEPLOYER_ADDR',
+  'deployed_at': '$TS'
+}
+print(json.dumps(receipt, indent=2))
+open('deployment.json','w').write(json.dumps(receipt, indent=2))
+"
           cat deployment.json
 
       - uses: actions/upload-artifact@v4
@@ -145,5 +150,15 @@ jobs:
 
       - name: Job summary
         run: |
-          printf '## Contract Deployed\n\n**Contract ID:** `%s`\n\n[View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/%s)\n\n```\nCONTRACT_ID=%s\n```\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## ✅ Contract Deployed to Stellar Testnet"
+            echo ""
+            echo "**Contract ID:** \`$CONTRACT_ID\`"
+            echo ""
+            echo "[🔍 View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID)"
+            echo ""
+            echo "### Copy to your .env files"
+            echo '```'
+            echo "CONTRACT_ID=$CONTRACT_ID"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
