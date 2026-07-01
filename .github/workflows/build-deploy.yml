@@ -58,64 +58,24 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Install Stellar CLI
-        run: |
-          curl -L "https://github.com/stellar/stellar-cli/releases/download/v21.5.3/stellar-cli-21.5.3-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
-
-      - name: Fund account
+      - name: Fund account via Friendbot
         run: |
           curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" -o /tmp/fb.json || true
-          python3 -c "import json; d=json.load(open('/tmp/fb.json')); print('Funded:', d.get('hash', 'already funded'))" 2>/dev/null || echo "Already funded or friendbot error"
+          python3 -c "import json; d=json.load(open('/tmp/fb.json')); print('Funded:', d.get('hash','already funded'))" 2>/dev/null || echo "May already be funded"
 
-      - name: Deploy contract
+      - name: Install deploy dependencies
+        run: cd scripts && npm install
+
+      - name: Deploy, initialize and whitelist
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          # Capture all output (stellar-cli may write contract ID to either stream)
-          stellar contract deploy \
-            --wasm "$WASM" \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 2>&1 | tee /tmp/deploy_out.txt
-          echo "--- Full deploy output above ---"
-          # Extract Stellar contract ID (starts with C, base32 strkey format)
-          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/deploy_out.txt | head -1)
+          CONTRACT_ID=$(node scripts/deploy.mjs "$WASM")
           if [ -z "$CONTRACT_ID" ]; then
-            echo "ERROR: No contract ID found in output. Full output:"
-            cat /tmp/deploy_out.txt
+            echo "Deploy failed - no contract ID returned"
             exit 1
           fi
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-          echo "Deployed contract: $CONTRACT_ID"
-
-      - name: Initialize contract
-        run: |
-          stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 \
-            -- initialize \
-            --admin "$DEPLOYER_ADDR" \
-            --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
-
-      - name: Whitelist deployer as institution
-        run: |
-          stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 \
-            -- whitelist_institution \
-            --institution "$DEPLOYER_ADDR"
-
-      - name: Verify deployment
-        run: |
-          stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            -- get_admin
-          echo "Contract verified ✓"
+          echo "Deployed: $CONTRACT_ID"
 
       - name: Save deployment receipt
         run: |
