@@ -24,17 +24,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.81'
+          toolchain: '1.84'
           targets: wasm32-unknown-unknown
       - name: Fetch dependencies
         run: cargo fetch 2>&1
-      - name: Build WASM (capture errors)
-        run: |
-          set +e
-          cargo build --target wasm32-unknown-unknown --release 2>&1
-          EXIT=$?
-          exit $EXIT
-      - run: cargo test -- --nocapture
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release 2>&1
+      - name: Run tests
+        run: cargo test -- --nocapture
       - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
@@ -50,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.81'
+          toolchain: '1.84'
           targets: wasm32-unknown-unknown
       - name: Fetch dependencies
         run: cargo fetch 2>&1
