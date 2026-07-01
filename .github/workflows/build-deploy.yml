@@ -15,8 +15,6 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  CARGO_NET_RETRY: "10"
-  CARGO_NET_TIMEOUT: "30"
 
 jobs:
   build-and-test:
@@ -25,14 +23,15 @@ jobs:
     if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.84'
+          toolchain: stable
           targets: wasm32-unknown-unknown
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release 2>&1
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
-        run: cargo test -- --nocapture
+        run: cargo test
       - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
@@ -46,23 +45,26 @@ jobs:
     environment: testnet
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.84'
+          toolchain: stable
           targets: wasm32-unknown-unknown
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release 2>&1
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
-        run: cargo test -- --nocapture
+        run: cargo test
       - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli@22.0.1 --features opt
+        run: cargo install --locked stellar-cli --features opt
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
       - name: Fund via Friendbot
         run: |
           ADDR=$(stellar keys address deployer)
           echo "Deployer: $ADDR"
-          curl -sf "https://friendbot.stellar.org?addr=$ADDR" | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" || echo "May already be funded"
+          curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
+            | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
+            || echo "May already be funded"
       - name: Deploy contract
         id: deploy
         run: |
