@@ -42,6 +42,8 @@ jobs:
     name: Build, Test & Deploy to Testnet
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
+    permissions:
+      contents: write
     env:
       SOROBAN_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
     steps:
@@ -107,7 +109,7 @@ jobs:
           cp /tmp/deploy_log.txt deploy_log.txt 2>/dev/null || echo "No log file" > deploy_log.txt
           git add deploy_log.txt
           git commit -m "ci: deploy log [skip ci]" || true
-          git push origin main || true
+          git push "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" main || true
 
       - name: Save deployment receipt
         run: |
