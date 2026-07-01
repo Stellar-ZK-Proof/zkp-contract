@@ -27,20 +27,13 @@ jobs:
           toolchain: '1.81'
           targets: wasm32-unknown-unknown
       - name: Fetch dependencies
+        run: cargo fetch 2>&1
+      - name: Build WASM (capture errors)
         run: |
-          cargo fetch 2>&1 | tee /tmp/fetch.log || true
-          echo "## Fetch output" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat /tmp/fetch.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-      - name: Build WASM
-        run: |
-          cargo build --target wasm32-unknown-unknown --release 2>&1 | tee /tmp/build.log || true
-          echo "## Build output (last 80 lines)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -80 /tmp/build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          test -f target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
+          set +e
+          cargo build --target wasm32-unknown-unknown --release 2>&1
+          EXIT=$?
+          exit $EXIT
       - run: cargo test -- --nocapture
       - uses: actions/upload-artifact@v4
         with:
@@ -62,7 +55,7 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch 2>&1
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo build --target wasm32-unknown-unknown --release 2>&1
       - name: Run tests
         run: cargo test -- --nocapture
       - name: Install Stellar CLI
