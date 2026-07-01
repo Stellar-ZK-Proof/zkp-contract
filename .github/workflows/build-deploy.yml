@@ -42,6 +42,8 @@ jobs:
     name: Build, Test & Deploy to Testnet
     runs-on: ubuntu-latest
     if: github.event.inputs.deploy == 'true'
+    env:
+      SOROBAN_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
