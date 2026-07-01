@@ -40,11 +40,14 @@ jobs:
       - name: Install Stellar CLI
         run: cargo install --locked stellar-cli@22.0.1 --features opt
 
-      - name: Build WASM
-        run: stellar contract build
+      - name: Build WASM (verbose)
+        run: |
+          stellar contract build 2>&1 || \
+          cargo build --target wasm32-unknown-unknown --release 2>&1
+        continue-on-error: false
 
       - name: Run tests
-        run: cargo test
+        run: cargo test -- --nocapture
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
@@ -62,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.81 + Stellar CLI
+      - name: Install Rust 1.81
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.81'
@@ -72,13 +75,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-deploy
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Stellar CLI
         run: cargo install --locked stellar-cli@22.0.1 --features opt
 
-      - name: Build WASM
-        run: stellar contract build
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zkp-private-pay-wasm
 
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
@@ -86,28 +91,23 @@ jobs:
       - name: Fund account via Friendbot
         run: |
           ADDR=$(stellar keys address deployer)
-          echo "Deployer address: $ADDR"
+          echo "Deployer: $ADDR"
           curl -s "https://friendbot.stellar.org?addr=$ADDR" | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
-          if 'hash' in d:
-              print('Funded! TX hash:', d['hash'])
-          elif 'status' in d:
-              print('Already funded or error:', d)
-          else:
-              print(d)
-          "
+          print('Funded TX:', d.get('hash', d))
+          " || echo "Already funded or friendbot error"
 
       - name: Deploy contract
         id: deploy
         run: |
           CONTRACT_ID=$(stellar contract deploy \
-            --wasm target/wasm32-unknown-unknown/release/zkp_private_pay.wasm \
+            --wasm zkp_private_pay.wasm \
             --source deployer \
-            --network testnet 2>&1)
+            --network testnet)
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-          echo "Deployed contract: $CONTRACT_ID"
+          echo "Deployed: $CONTRACT_ID"
 
       - name: Initialize contract
         run: |
@@ -130,7 +130,7 @@ jobs:
             -- whitelist_institution \
             --institution "$ADDR"
 
-      - name: Write deployment receipt
+      - name: Write and upload deployment receipt
         run: |
           ADDR=$(stellar keys address deployer)
           cat > deployment.json << RECEIPT
@@ -151,15 +151,13 @@ jobs:
           name: deployment-receipt
           path: deployment.json
 
-      - name: Post CONTRACT_ID to job summary
+      - name: Job summary
         run: |
-          echo "## ✅ Contract Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Contract Deployed to Testnet" >> $GITHUB_STEP_SUMMARY
           echo "**Contract ID:** \`$CONTRACT_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Explorer:** https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Explorer:** [View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Add this to your \`.env\` files:" >> $GITHUB_STEP_SUMMARY
+          echo "Add to your .env:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
