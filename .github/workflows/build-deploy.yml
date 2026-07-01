@@ -16,9 +16,11 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  build:
-    name: Build & Test WASM
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
+    # Only run on push (not deploy dispatches - deploy job handles that)
+    if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
     steps:
       - uses: actions/checkout@v4
 
@@ -35,63 +37,70 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-v2-
-
-      - name: Fetch dependencies
-        run: |
-          cargo fetch 2>&1 | tee fetch.log || true
-          echo "## Fetch log" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat fetch.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-v3-
 
       - name: Build WASM
         run: |
-          cargo build --target wasm32-unknown-unknown --release 2>&1 | tee build.log
-          echo "## Build log (last 60 lines)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -60 build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          cargo build --target wasm32-unknown-unknown --release
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          echo "WASM size: $(du -h $WASM | cut -f1)" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Build Succeeded" >> $GITHUB_STEP_SUMMARY
+          echo "WASM: $(du -h $WASM | cut -f1)" >> $GITHUB_STEP_SUMMARY
 
       - name: Run tests
-        run: cargo test -- --nocapture 2>&1 | tee test.log
-        continue-on-error: true
-
-      - name: Test summary
-        if: always()
         run: |
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          cargo test -- --nocapture 2>&1 | tee test.log
+          echo "## Tests" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat test.log 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "no test output"
+          cat test.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload WASM artifact
-        if: success()
+      - name: Upload WASM
         uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
           path: target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
           retention-days: 30
 
-  deploy-testnet:
-    name: Deploy to Stellar Testnet
+  build-and-deploy:
+    name: Build, Test & Deploy to Testnet
     runs-on: ubuntu-latest
-    needs: build
     if: github.event.inputs.deploy == 'true'
     environment: testnet
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.81
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.81'
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-v3-
+
+      - name: Build WASM
+        run: |
+          cargo build --target wasm32-unknown-unknown --release
+          echo "## ✅ Build Succeeded" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run tests
+        run: |
+          cargo test -- --nocapture 2>&1 | tee test.log
+          echo "## Tests" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
       - name: Install Stellar CLI
         run: cargo install --locked stellar-cli@22.0.1 --features opt
-
-      - name: Download WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: zkp-private-pay-wasm
-          path: ./wasm
 
       - name: Add deployer identity
         run: stellar keys add deployer --secret-key "${{ secrets.STELLAR_SECRET_KEY }}"
@@ -102,13 +111,14 @@ jobs:
           echo "Deployer: $ADDR"
           curl -sf "https://friendbot.stellar.org?addr=$ADDR" \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print('Funded TX:', d.get('hash','?'))" \
-            || echo "Friendbot: may already be funded"
+            || echo "May already be funded"
 
       - name: Deploy contract
         id: deploy
         run: |
+          WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
           CONTRACT_ID=$(stellar contract deploy \
-            --wasm ./wasm/zkp_private_pay.wasm \
+            --wasm "$WASM" \
             --source deployer \
             --network testnet)
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
@@ -123,21 +133,33 @@ jobs:
             --admin "$(stellar keys address deployer)" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
-      - name: Whitelist deployer
+      - name: Whitelist deployer as test institution
         run: |
           stellar contract invoke \
             --id "$CONTRACT_ID" --source deployer --network testnet \
             -- whitelist_institution \
             --institution "$(stellar keys address deployer)"
 
-      - name: Save & upload receipt
+      - name: Save deployment receipt
         run: |
           ADDR=$(stellar keys address deployer)
-          echo "{\"contract_id\":\"$CONTRACT_ID\",\"network\":\"testnet\",\"explorer\":\"https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID\",\"deployer\":\"$ADDR\",\"deployed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            | python3 -m json.tool > deployment.json
+          python3 -c "
+import json
+receipt = {
+  'contract_id': '$CONTRACT_ID',
+  'network': 'testnet',
+  'rpc_url': 'https://soroban-testnet.stellar.org',
+  'explorer': 'https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID',
+  'deployer': '$ADDR',
+  'deployed_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+}
+print(json.dumps(receipt, indent=2))
+open('deployment.json','w').write(json.dumps(receipt, indent=2))
+"
           cat deployment.json
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload deployment receipt
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-receipt
           path: deployment.json
@@ -145,8 +167,12 @@ jobs:
       - name: Job summary
         run: |
           echo "## ✅ Contract Deployed to Stellar Testnet" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Contract ID:** \`$CONTRACT_ID\`" >> $GITHUB_STEP_SUMMARY
-          echo "[View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[🔍 View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/$CONTRACT_ID)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Add to your .env files" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
