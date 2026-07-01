@@ -22,26 +22,20 @@ jobs:
     if: github.event_name == 'push' || github.event.inputs.deploy == 'false'
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust 1.81
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.81'
           targets: wasm32-unknown-unknown
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-v2-
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-      - name: Run tests
-        run: cargo test -- --nocapture
-      - name: Upload WASM
-        uses: actions/upload-artifact@v4
+          key: ${{ runner.os }}-soroban-cargo
+      - run: cargo build --target wasm32-unknown-unknown --release
+      - run: cargo test -- --nocapture
+      - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
           path: target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
@@ -54,20 +48,17 @@ jobs:
     environment: testnet
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust 1.81
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.81'
           targets: wasm32-unknown-unknown
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target/
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-v2-
+          key: ${{ runner.os }}-soroban-cargo
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release
       - name: Run tests
@@ -106,8 +97,7 @@ jobs:
           printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
             "$CONTRACT_ID" "$CONTRACT_ID" "$ADDR" "$TS" > deployment.json
           cat deployment.json
-      - name: Upload receipt
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: deployment-receipt
           path: deployment.json
