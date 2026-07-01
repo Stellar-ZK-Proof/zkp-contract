@@ -16,6 +16,8 @@ env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
   DEPLOYER_ADDR: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
+  RPC: "https://soroban-testnet.stellar.org"
+  NET: "Test SDF Network ; September 2015"
 
 jobs:
   build-and-test:
@@ -72,43 +74,51 @@ jobs:
         id: deploy
         run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          # Capture full output, extract C... contract ID
-          FULL_OUTPUT=$(stellar contract deploy \
+          set +e
+          stellar contract deploy \
             --wasm "$WASM" \
             --source deployer \
-            --rpc-url "https://soroban-testnet.stellar.org" \
-            --network-passphrase "Test SDF Network ; September 2015" 2>&1)
-          echo "Deploy output: $FULL_OUTPUT"
-          CONTRACT_ID=$(echo "$FULL_OUTPUT" | grep -oE 'C[A-Z0-9]{55}' | head -1)
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
+            2>&1 | tee /tmp/deploy_out.txt
+          DEPLOY_EXIT=${PIPESTATUS[0]}
+          set -e
+          cat /tmp/deploy_out.txt
+          # Extract contract ID from output
+          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/deploy_out.txt | head -1)
+          if [ -z "$CONTRACT_ID" ]; then
+            echo "ERROR: Could not extract contract ID from deploy output"
+            cat /tmp/deploy_out.txt
+            exit 1
+          fi
           echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
           echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-          echo "CONTRACT_ID: $CONTRACT_ID"
+          echo "Contract ID: $CONTRACT_ID"
 
       - name: Initialize contract
         run: |
-          echo "Initializing contract: $CONTRACT_ID"
+          echo "Initializing: $CONTRACT_ID"
           stellar contract invoke \
             --id "$CONTRACT_ID" \
             --source deployer \
-            --rpc-url "https://soroban-testnet.stellar.org" \
-            --network-passphrase "Test SDF Network ; September 2015" \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
             -- initialize \
             --admin "$DEPLOYER_ADDR" \
-            --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001" \
-            2>&1
-          echo "Initialize done"
+            --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
       - name: Whitelist deployer
         run: |
           stellar contract invoke \
             --id "$CONTRACT_ID" \
             --source deployer \
-            --rpc-url "https://soroban-testnet.stellar.org" \
-            --network-passphrase "Test SDF Network ; September 2015" \
+            --rpc-url "$RPC" \
+            --network-passphrase "$NET" \
+            --fee 1000000 \
             -- whitelist_institution \
-            --institution "$DEPLOYER_ADDR" \
-            2>&1
-          echo "Whitelist done"
+            --institution "$DEPLOYER_ADDR"
 
       - name: Save receipt
         run: |
