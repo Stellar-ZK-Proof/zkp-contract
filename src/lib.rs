@@ -2,14 +2,8 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     Address, Bytes, BytesN, Env, Map, Vec,
-    symbol_short, Symbol,
+    symbol_short,
 };
-
-const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
-const VK_KEY:    Symbol = symbol_short!("VK");
-const TX_STORE:  Symbol = symbol_short!("TXS");
-const NULLIFIERS:Symbol = symbol_short!("NULLS");
-const WHITELIST: Symbol = symbol_short!("WL");
 
 #[contracttype] #[derive(Clone, PartialEq, Debug)]
 pub enum PaymentStatus { Pending, Settled, Rejected }
@@ -30,49 +24,49 @@ pub struct ZkpPrivatePay;
 #[contractimpl]
 impl ZkpPrivatePay {
     pub fn initialize(env: Env, admin: Address, verifier_key_hash: BytesN<32>) {
-        if env.storage().instance().has(&ADMIN_KEY) { panic!("already initialized"); }
+        if env.storage().instance().has(&symbol_short!("ADMIN")) { panic!("already initialized"); }
         admin.require_auth();
-        env.storage().instance().set(&ADMIN_KEY, &admin);
-        env.storage().instance().set(&VK_KEY, &verifier_key_hash);
-        env.storage().instance().set(&TX_STORE, &Map::<BytesN<32>, TxRecord>::new(&env));
-        env.storage().instance().set(&NULLIFIERS, &Map::<BytesN<32>, bool>::new(&env));
-        env.storage().instance().set(&WHITELIST, &Map::<Address, bool>::new(&env));
+        env.storage().instance().set(&symbol_short!("ADMIN"), &admin);
+        env.storage().instance().set(&symbol_short!("VK"), &verifier_key_hash);
+        env.storage().instance().set(&symbol_short!("TXS"), &Map::<BytesN<32>, TxRecord>::new(&env));
+        env.storage().instance().set(&symbol_short!("NULLS"), &Map::<BytesN<32>, bool>::new(&env));
+        env.storage().instance().set(&symbol_short!("WL"), &Map::<Address, bool>::new(&env));
     }
 
     pub fn whitelist_institution(env: Env, institution: Address) {
         Self::require_admin(&env);
-        let mut wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
+        let mut wl: Map<Address, bool> = env.storage().instance().get(&symbol_short!("WL")).unwrap();
         wl.set(institution, true);
-        env.storage().instance().set(&WHITELIST, &wl);
+        env.storage().instance().set(&symbol_short!("WL"), &wl);
     }
 
     pub fn delist_institution(env: Env, institution: Address) {
         Self::require_admin(&env);
-        let mut wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
+        let mut wl: Map<Address, bool> = env.storage().instance().get(&symbol_short!("WL")).unwrap();
         wl.remove(institution);
-        env.storage().instance().set(&WHITELIST, &wl);
+        env.storage().instance().set(&symbol_short!("WL"), &wl);
     }
 
     pub fn submit_payment(env: Env, sender: Address, commitment: BytesN<32>,
         nullifier: BytesN<32>, audit_ref_hash: BytesN<32>) -> BytesN<32> {
         sender.require_auth();
         Self::require_whitelisted(&env, &sender);
-        let mut nulls: Map<BytesN<32>, bool> = env.storage().instance().get(&NULLIFIERS).unwrap();
+        let mut nulls: Map<BytesN<32>, bool> = env.storage().instance().get(&symbol_short!("NULLS")).unwrap();
         if nulls.get(nullifier.clone()).unwrap_or(false) { panic!("nullifier already spent"); }
         let timestamp = env.ledger().timestamp();
         let tx_id = Self::compute_tx_id(&env, &commitment, timestamp);
         let record = TxRecord { commitment, sender, timestamp,
             status: PaymentStatus::Pending, nullifier: nullifier.clone(), audit_ref_hash };
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
+        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&symbol_short!("TXS")).unwrap();
         txs.set(tx_id.clone(), record);
-        env.storage().instance().set(&TX_STORE, &txs);
+        env.storage().instance().set(&symbol_short!("TXS"), &txs);
         nulls.set(nullifier, true);
-        env.storage().instance().set(&NULLIFIERS, &nulls);
+        env.storage().instance().set(&symbol_short!("NULLS"), &nulls);
         tx_id
     }
 
     pub fn settle_payment(env: Env, tx_id: BytesN<32>, proof: ZkProof) {
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
+        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&symbol_short!("TXS")).unwrap();
         let mut record = txs.get(tx_id.clone()).expect("tx not found");
         if record.status != PaymentStatus::Pending { panic!("tx already finalized"); }
         if proof.public_inputs.len() < 3 { panic!("insufficient public inputs"); }
@@ -82,40 +76,47 @@ impl ZkpPrivatePay {
         if proof.public_inputs.get(2).unwrap() != record.audit_ref_hash { panic!("audit ref mismatch"); }
         record.status = PaymentStatus::Settled;
         txs.set(tx_id, record);
-        env.storage().instance().set(&TX_STORE, &txs);
+        env.storage().instance().set(&symbol_short!("TXS"), &txs);
     }
 
     pub fn reject_payment(env: Env, tx_id: BytesN<32>) {
         Self::require_admin(&env);
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
+        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&symbol_short!("TXS")).unwrap();
         let mut record = txs.get(tx_id.clone()).expect("tx not found");
         if record.status != PaymentStatus::Pending { panic!("tx already finalized"); }
         record.status = PaymentStatus::Rejected;
         txs.set(tx_id, record);
-        env.storage().instance().set(&TX_STORE, &txs);
+        env.storage().instance().set(&symbol_short!("TXS"), &txs);
     }
 
     pub fn get_tx(env: Env, tx_id: BytesN<32>) -> TxRecord {
-        env.storage().instance().get::<Symbol, Map<BytesN<32>, TxRecord>>(&TX_STORE)
+        env.storage().instance().get::<_, Map<BytesN<32>, TxRecord>>(&symbol_short!("TXS"))
             .unwrap().get(tx_id).expect("tx not found")
     }
 
     pub fn is_nullifier_spent(env: Env, nullifier: BytesN<32>) -> bool {
-        env.storage().instance().get::<Symbol, Map<BytesN<32>, bool>>(&NULLIFIERS)
+        env.storage().instance().get::<_, Map<BytesN<32>, bool>>(&symbol_short!("NULLS"))
             .unwrap().get(nullifier).unwrap_or(false)
     }
 
-    pub fn get_vk_hash(env: Env) -> BytesN<32> { env.storage().instance().get(&VK_KEY).unwrap() }
-    pub fn get_admin(env: Env) -> Address { env.storage().instance().get(&ADMIN_KEY).unwrap() }
+    pub fn get_vk_hash(env: Env) -> BytesN<32> {
+        env.storage().instance().get(&symbol_short!("VK")).unwrap()
+    }
+
+    pub fn get_admin(env: Env) -> Address {
+        env.storage().instance().get(&symbol_short!("ADMIN")).unwrap()
+    }
 
     fn require_admin(env: &Env) {
-        let admin: Address = env.storage().instance().get(&ADMIN_KEY).unwrap();
+        let admin: Address = env.storage().instance().get(&symbol_short!("ADMIN")).unwrap();
         admin.require_auth();
     }
+
     fn require_whitelisted(env: &Env, addr: &Address) {
-        let wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
+        let wl: Map<Address, bool> = env.storage().instance().get(&symbol_short!("WL")).unwrap();
         if !wl.get(addr.clone()).unwrap_or(false) { panic!("institution not whitelisted"); }
     }
+
     fn compute_tx_id(env: &Env, commitment: &BytesN<32>, timestamp: u64) -> BytesN<32> {
         let mut input = Bytes::new(env);
         input.append(&commitment.clone().into());
