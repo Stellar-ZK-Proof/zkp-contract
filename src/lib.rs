@@ -1,258 +1,27 @@
 #![no_std]
-
-use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    Address, Bytes, BytesN, Env, Map, Vec,
-    symbol_short, Symbol,
-};
-
-// Storage keys
-const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
-const VK_KEY: Symbol = symbol_short!("VK");
-const TX_STORE: Symbol = symbol_short!("TXS");
-const NULLIFIERS: Symbol = symbol_short!("NULLS");
-const WHITELIST: Symbol = symbol_short!("WL");
-
-#[contracttype]
-#[derive(Clone, PartialEq, Debug)]
-pub enum PaymentStatus {
-    Pending,
-    Settled,
-    Rejected,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct TxRecord {
-    pub commitment: BytesN<32>,
-    pub sender: Address,
-    pub timestamp: u64,
-    pub status: PaymentStatus,
-    pub nullifier: BytesN<32>,
-    pub audit_ref_hash: BytesN<32>,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct ZkProof {
-    pub proof_bytes: Bytes,
-    pub public_inputs: Vec<BytesN<32>>,
-}
+use soroban_sdk::{contract, contractimpl, Env, Symbol, symbol_short};
 
 #[contract]
-pub struct ZkpPrivatePay;
+pub struct HelloContract;
 
 #[contractimpl]
-impl ZkpPrivatePay {
-    pub fn initialize(env: Env, admin: Address, verifier_key_hash: BytesN<32>) {
-        if env.storage().instance().has(&ADMIN_KEY) {
-            panic!("already initialized");
-        }
-        admin.require_auth();
-        env.storage().instance().set(&ADMIN_KEY, &admin);
-        env.storage().instance().set(&VK_KEY, &verifier_key_hash);
-
-        let txs: Map<BytesN<32>, TxRecord> = Map::new(&env);
-        env.storage().instance().set(&TX_STORE, &txs);
-        let nulls: Map<BytesN<32>, bool> = Map::new(&env);
-        env.storage().instance().set(&NULLIFIERS, &nulls);
-        let wl: Map<Address, bool> = Map::new(&env);
-        env.storage().instance().set(&WHITELIST, &wl);
-    }
-
-    pub fn update_vk(env: Env, new_vk_hash: BytesN<32>) {
-        Self::require_admin(&env);
-        env.storage().instance().set(&VK_KEY, &new_vk_hash);
-    }
-
-    pub fn whitelist_institution(env: Env, institution: Address) {
-        Self::require_admin(&env);
-        let mut wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
-        wl.set(institution, true);
-        env.storage().instance().set(&WHITELIST, &wl);
-    }
-
-    pub fn delist_institution(env: Env, institution: Address) {
-        Self::require_admin(&env);
-        let mut wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
-        wl.remove(institution);
-        env.storage().instance().set(&WHITELIST, &wl);
-    }
-
-    pub fn submit_payment(
-        env: Env,
-        sender: Address,
-        commitment: BytesN<32>,
-        nullifier: BytesN<32>,
-        audit_ref_hash: BytesN<32>,
-    ) -> BytesN<32> {
-        sender.require_auth();
-        Self::require_whitelisted(&env, &sender);
-
-        let mut nulls: Map<BytesN<32>, bool> = env.storage().instance().get(&NULLIFIERS).unwrap();
-        if nulls.get(nullifier.clone()).unwrap_or(false) {
-            panic!("nullifier already spent");
-        }
-
-        let timestamp = env.ledger().timestamp();
-        let tx_id = Self::compute_tx_id(&env, &commitment, timestamp);
-
-        let record = TxRecord {
-            commitment,
-            sender,
-            timestamp,
-            status: PaymentStatus::Pending,
-            nullifier: nullifier.clone(),
-            audit_ref_hash,
-        };
-
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
-        txs.set(tx_id.clone(), record);
-        env.storage().instance().set(&TX_STORE, &txs);
-
-        nulls.set(nullifier, true);
-        env.storage().instance().set(&NULLIFIERS, &nulls);
-
-        tx_id
-    }
-
-    pub fn settle_payment(env: Env, tx_id: BytesN<32>, proof: ZkProof) {
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
-        let mut record = txs.get(tx_id.clone()).expect("tx not found");
-
-        if record.status != PaymentStatus::Pending {
-            panic!("tx already settled or rejected");
-        }
-        if proof.public_inputs.len() < 3 {
-            panic!("insufficient public inputs");
-        }
-
-        let pi_commitment = proof.public_inputs.get(0).unwrap();
-        let pi_nullifier  = proof.public_inputs.get(1).unwrap();
-        let pi_audit      = proof.public_inputs.get(2).unwrap();
-
-        if pi_commitment != record.commitment  { panic!("commitment mismatch"); }
-        if pi_nullifier  != record.nullifier   { panic!("nullifier mismatch"); }
-        if pi_audit      != record.audit_ref_hash { panic!("audit ref mismatch"); }
-        if proof.proof_bytes.is_empty()        { panic!("empty proof"); }
-
-        record.status = PaymentStatus::Settled;
-        txs.set(tx_id, record);
-        env.storage().instance().set(&TX_STORE, &txs);
-    }
-
-    pub fn reject_payment(env: Env, tx_id: BytesN<32>) {
-        Self::require_admin(&env);
-        let mut txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
-        let mut record = txs.get(tx_id.clone()).expect("tx not found");
-        if record.status != PaymentStatus::Pending {
-            panic!("tx already finalized");
-        }
-        record.status = PaymentStatus::Rejected;
-        txs.set(tx_id, record);
-        env.storage().instance().set(&TX_STORE, &txs);
-    }
-
-    pub fn get_tx(env: Env, tx_id: BytesN<32>) -> TxRecord {
-        let txs: Map<BytesN<32>, TxRecord> = env.storage().instance().get(&TX_STORE).unwrap();
-        txs.get(tx_id).expect("tx not found")
-    }
-
-    pub fn is_nullifier_spent(env: Env, nullifier: BytesN<32>) -> bool {
-        let nulls: Map<BytesN<32>, bool> = env.storage().instance().get(&NULLIFIERS).unwrap();
-        nulls.get(nullifier).unwrap_or(false)
-    }
-
-    pub fn get_vk_hash(env: Env) -> BytesN<32> {
-        env.storage().instance().get(&VK_KEY).unwrap()
-    }
-
-    pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&ADMIN_KEY).unwrap()
-    }
-
-    fn require_admin(env: &Env) {
-        let admin: Address = env.storage().instance().get(&ADMIN_KEY).unwrap();
-        admin.require_auth();
-    }
-
-    fn require_whitelisted(env: &Env, addr: &Address) {
-        let wl: Map<Address, bool> = env.storage().instance().get(&WHITELIST).unwrap();
-        if !wl.get(addr.clone()).unwrap_or(false) {
-            panic!("institution not whitelisted");
-        }
-    }
-
-    fn compute_tx_id(env: &Env, commitment: &BytesN<32>, timestamp: u64) -> BytesN<32> {
-        let mut input = Bytes::new(env);
-        input.append(&commitment.clone().into());
-        for b in timestamp.to_be_bytes().iter() {
-            input.push_back(*b);
-        }
-        env.crypto().sha256(&input)
+impl HelloContract {
+    pub fn hello(env: Env, to: Symbol) -> Symbol {
+        symbol_short!("Hello")
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::{vec, Env};
-
-    fn dummy_hash(env: &Env, seed: u8) -> BytesN<32> {
-        let mut b = Bytes::new(env);
-        for _ in 0..32 { b.push_back(seed); }
-        env.crypto().sha256(&b)
-    }
+    use soroban_sdk::{symbol_short, vec, Env};
 
     #[test]
-    fn test_full_payment_flow() {
+    fn test_hello() {
         let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().with_mut(|l| { l.timestamp = 1_700_000_000; });
-
-        let admin = Address::generate(&env);
-        let institution = Address::generate(&env);
-        let contract_id = env.register_contract(None, ZkpPrivatePay);
-        let client = ZkpPrivatePayClient::new(&env, &contract_id);
-
-        let vk_hash = dummy_hash(&env, 0x01);
-        client.initialize(&admin, &vk_hash);
-        client.whitelist_institution(&institution);
-
-        let commitment   = dummy_hash(&env, 0x02);
-        let nullifier    = dummy_hash(&env, 0x03);
-        let audit_ref    = dummy_hash(&env, 0x04);
-
-        let tx_id = client.submit_payment(&institution, &commitment, &nullifier, &audit_ref);
-        assert_eq!(client.get_tx(&tx_id).status, PaymentStatus::Pending);
-
-        let proof = ZkProof {
-            proof_bytes: Bytes::from_array(&env, &[1u8; 128]),
-            public_inputs: vec![&env, commitment, nullifier, audit_ref],
-        };
-        client.settle_payment(&tx_id, &proof);
-        assert_eq!(client.get_tx(&tx_id).status, PaymentStatus::Settled);
-    }
-
-    #[test]
-    #[should_panic(expected = "nullifier already spent")]
-    fn test_replay_blocked() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let inst  = Address::generate(&env);
-        let cid   = env.register_contract(None, ZkpPrivatePay);
-        let c     = ZkpPrivatePayClient::new(&env, &cid);
-
-        c.initialize(&admin, &dummy_hash(&env, 1));
-        c.whitelist_institution(&inst);
-
-        let commitment = dummy_hash(&env, 2);
-        let nullifier  = dummy_hash(&env, 3);
-        let audit      = dummy_hash(&env, 4);
-
-        c.submit_payment(&inst, &commitment, &nullifier, &audit);
-        c.submit_payment(&inst, &commitment, &nullifier, &audit); // should panic
+        let contract_id = env.register_contract(None, HelloContract);
+        let client = HelloContractClient::new(&env, &contract_id);
+        let result = client.hello(&symbol_short!("World"));
+        assert_eq!(result, symbol_short!("Hello"));
     }
 }
