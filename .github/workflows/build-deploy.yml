@@ -64,61 +64,71 @@ jobs:
           mkdir -p ~/.config/stellar/identity
           printf '{"secret_key":"%s"}\n' "$SECRET" > ~/.config/stellar/identity/deployer.toml
 
-      - name: Fund deployer via Friendbot
+      - name: Fund and deploy (with retry)
+        id: deploy
         run: |
+          # Fund
           curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" \
             | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
             || echo "May already be funded"
 
-      - name: Deploy contract
-        id: deploy
-        run: |
           WASM=target/wasm32-unknown-unknown/release/zkp_private_pay.wasm
-          set +e
-          stellar contract deploy \
-            --wasm "$WASM" \
-            --source deployer \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 \
-            2>&1 | tee /tmp/deploy_out.txt
-          DEPLOY_EXIT=${PIPESTATUS[0]}
-          set -e
-          cat /tmp/deploy_out.txt
-          # Extract contract ID from output
-          CONTRACT_ID=$(grep -oE 'C[A-Z2-7]{55}' /tmp/deploy_out.txt | head -1)
+
+          # Retry deploy up to 3 times
+          for attempt in 1 2 3; do
+            echo "Deploy attempt $attempt..."
+            OUTPUT=$(stellar contract deploy \
+              --wasm "$WASM" \
+              --source deployer \
+              --rpc-url "$RPC" \
+              --network-passphrase "$NET" \
+              --fee 1000000 2>&1)
+            echo "$OUTPUT"
+            CONTRACT_ID=$(echo "$OUTPUT" | grep -oE 'C[A-Z2-7]{55}' | head -1)
+            if [ -n "$CONTRACT_ID" ]; then
+              echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
+              echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
+              echo "SUCCESS: $CONTRACT_ID"
+              break
+            fi
+            echo "Attempt $attempt failed, waiting 15s..."
+            sleep 15
+          done
+
           if [ -z "$CONTRACT_ID" ]; then
-            echo "ERROR: Could not extract contract ID from deploy output"
-            cat /tmp/deploy_out.txt
+            echo "All deploy attempts failed"
             exit 1
           fi
-          echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
-          echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
-          echo "Contract ID: $CONTRACT_ID"
 
       - name: Initialize contract
         run: |
           echo "Initializing: $CONTRACT_ID"
-          stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --source deployer \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 \
-            -- initialize \
-            --admin "$DEPLOYER_ADDR" \
-            --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
+          for attempt in 1 2 3; do
+            stellar contract invoke \
+              --id "$CONTRACT_ID" \
+              --source deployer \
+              --rpc-url "$RPC" \
+              --network-passphrase "$NET" \
+              --fee 1000000 \
+              -- initialize \
+              --admin "$DEPLOYER_ADDR" \
+              --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001" \
+              2>&1 && break || (echo "Init attempt $attempt failed, retrying..."; sleep 10)
+          done
 
       - name: Whitelist deployer
         run: |
-          stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --source deployer \
-            --rpc-url "$RPC" \
-            --network-passphrase "$NET" \
-            --fee 1000000 \
-            -- whitelist_institution \
-            --institution "$DEPLOYER_ADDR"
+          for attempt in 1 2 3; do
+            stellar contract invoke \
+              --id "$CONTRACT_ID" \
+              --source deployer \
+              --rpc-url "$RPC" \
+              --network-passphrase "$NET" \
+              --fee 1000000 \
+              -- whitelist_institution \
+              --institution "$DEPLOYER_ADDR" \
+              2>&1 && break || (echo "Whitelist attempt $attempt failed, retrying..."; sleep 10)
+          done
 
       - name: Save receipt
         run: |
