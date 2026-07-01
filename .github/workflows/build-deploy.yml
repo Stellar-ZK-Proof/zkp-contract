@@ -15,10 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: never
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  DEPLOYER_ADDRESS: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
-  NETWORK: "testnet"
-  NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
-  RPC_URL: "https://soroban-testnet.stellar.org"
+  DEPLOYER_ADDR: "GCETFRUEIILOIRR52A4S32SASLEI63LAL4KATVAKXZTLHHOXSOA3V6JS"
 
 jobs:
   build-and-test:
@@ -31,10 +28,8 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-      - name: Run tests
-        run: cargo test
+      - run: cargo build --target wasm32-unknown-unknown --release
+      - run: cargo test
       - uses: actions/upload-artifact@v4
         with:
           name: zkp-private-pay-wasm
@@ -51,10 +46,8 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-      - name: Run tests
-        run: cargo test
+      - run: cargo build --target wasm32-unknown-unknown --release
+      - run: cargo test
 
       - name: Install Stellar CLI
         run: |
@@ -62,17 +55,27 @@ jobs:
           curl -L "https://github.com/stellar/stellar-cli/releases/download/v${VER}/stellar-cli-${VER}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
           stellar --version
 
-      - name: Configure Stellar network + identity
+      - name: Setup identity and fund
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
         run: |
-          stellar network add testnet \
-            --rpc-url "$RPC_URL" \
-            --network-passphrase "$NETWORK_PASSPHRASE"
-          echo "${{ secrets.STELLAR_SECRET_KEY }}" | stellar keys add deployer --secret-key
-          echo "Identity added. Address: $(stellar keys address deployer)"
+          # Create keystore directory and write identity file manually
+          mkdir -p ~/.config/stellar/identity
+          cat > ~/.config/stellar/identity/deployer.toml << KEYEOF
+          secret_key = "$STELLAR_SECRET_KEY"
+          KEYEOF
+          echo "Identity file created"
 
-      - name: Fund deployer via Friendbot
-        run: |
-          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDRESS" \
+          # Add network config
+          mkdir -p ~/.config/stellar/network
+          cat > ~/.config/stellar/network/testnet.toml << NETEOF
+          rpc_url = "https://soroban-testnet.stellar.org"
+          network_passphrase = "Test SDF Network ; September 2015"
+          NETEOF
+          echo "Network config created"
+
+          # Fund
+          curl -sf "https://friendbot.stellar.org?addr=$DEPLOYER_ADDR" \
             | python3 -c "import sys,json; print('Funded:', json.load(sys.stdin).get('hash','?'))" \
             || echo "May already be funded"
 
@@ -91,27 +94,22 @@ jobs:
       - name: Initialize contract
         run: |
           stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --source deployer \
-            --network testnet \
+            --id "$CONTRACT_ID" --source deployer --network testnet \
             -- initialize \
-            --admin "$DEPLOYER_ADDRESS" \
+            --admin "$DEPLOYER_ADDR" \
             --verifier_key_hash "0000000000000000000000000000000000000000000000000000000000000001"
 
-      - name: Whitelist deployer as test institution
+      - name: Whitelist deployer
         run: |
           stellar contract invoke \
-            --id "$CONTRACT_ID" \
-            --source deployer \
-            --network testnet \
-            -- whitelist_institution \
-            --institution "$DEPLOYER_ADDRESS"
+            --id "$CONTRACT_ID" --source deployer --network testnet \
+            -- whitelist_institution --institution "$DEPLOYER_ADDR"
 
       - name: Save receipt
         run: |
           TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           printf '{"contract_id":"%s","network":"testnet","explorer":"https://stellar.expert/explorer/testnet/contract/%s","deployer":"%s","deployed_at":"%s"}\n' \
-            "$CONTRACT_ID" "$CONTRACT_ID" "$DEPLOYER_ADDRESS" "$TS" \
+            "$CONTRACT_ID" "$CONTRACT_ID" "$DEPLOYER_ADDR" "$TS" \
             | python3 -m json.tool > deployment.json
           cat deployment.json
 
