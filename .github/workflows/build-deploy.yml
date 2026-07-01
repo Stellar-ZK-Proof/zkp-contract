@@ -99,13 +99,15 @@ jobs:
           echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
           echo "Deployed: $CONTRACT_ID"
 
-      - name: Upload deploy log (always)
+      - name: Save log to repo (always)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-log
-          path: /tmp/deploy_log.txt
-          retention-days: 3
+        run: |
+          git config user.email "ci@zkp-private-pay.dev"
+          git config user.name "CI Deploy"
+          cp /tmp/deploy_log.txt deploy_log.txt 2>/dev/null || echo "No log file" > deploy_log.txt
+          git add deploy_log.txt
+          git commit -m "ci: deploy log [skip ci]" || true
+          git push origin main || true
 
       - name: Save deployment receipt
         run: |
